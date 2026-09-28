@@ -7,12 +7,11 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Configure Git
@@ -52,83 +51,56 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  smoke:
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
-
-    steps:
-      - name: Configure Git
-        run: git config --global init.defaultBranch main
-
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Download APK
-        uses: actions/download-artifact@v8
-        with:
-          name: hyouka-cartoon-racer-debug
-          path: app/build/outputs/apk/debug
-
-      - name: Smoke test on Android emulator
+      - name: Android emulator smoke test
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          target: google_apis
+          target: default
           arch: x86_64
           profile: Nexus 6
-          cores: 2
-          ram-size: 2048M
-          heap-size: 512M
-          emulator-boot-timeout: 480
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          cores: 4
+          ram-size: 4096M
+          heap-size: 768M
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-metrics
           disable-animations: true
           script: |
             set -eux
+
             adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb logcat -c
 
-            PKG=com.tomasthrawat.hyoukacartoonracer.debug
-            ACTIVITY=$PKG/.MainActivity
-
-            adb shell am force-stop "$PKG"
-            adb shell am start -n "$ACTIVITY"
+            adb shell am force-stop com.tomasthrawat.hyoukacartoonracer.debug
+            adb shell am start -n com.tomasthrawat.hyoukacartoonracer.debug/.MainActivity
             sleep 4
 
-            adb shell dumpsys activity activities | grep -F "$ACTIVITY"
+            adb shell pidof com.tomasthrawat.hyoukacartoonracer.debug
+            adb shell dumpsys activity activities | grep -F 'com.tomasthrawat.hyoukacartoonracer.debug/.MainActivity'
+
             adb exec-out screencap -p > smoke-menu.png
 
-            SIZE=$(adb shell wm size | tail -1 | tr -d '\r' | awk '{print $NF}')
-            W=\${SIZE%x*}
-            H=\${SIZE#*x}
-            if [ "$W" -lt "$H" ]; then
-              T=$W
-              W=$H
-              H=$T
-            fi
-
-            # Test HOW TO PLAY and BACK navigation.
-            adb shell input tap $((W / 2)) $((H * 56 / 100))
+            SIZE=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); W=\${SIZE%x*}; H=\${SIZE#*x}; if [ "$W" -lt "$H" ]; then T=$W; W=$H; H=$T; fi; adb shell input tap $((W / 2)) $((H * 56 / 100))
             sleep 1
             adb exec-out screencap -p > smoke-howto.png
 
-            adb shell input tap $((W / 2)) $((H * 85 / 100))
+            SIZE=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); W=\${SIZE%x*}; H=\${SIZE#*x}; if [ "$W" -lt "$H" ]; then T=$W; W=$H; H=$T; fi; adb shell input tap $((W / 2)) $((H * 85 / 100))
             sleep 1
 
-            # Start the race from the main menu.
-            adb shell input tap $((W / 2)) $((H * 43 / 100))
+            SIZE=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); W=\${SIZE%x*}; H=\${SIZE#*x}; if [ "$W" -lt "$H" ]; then T=$W; W=$H; H=$T; fi; adb shell input tap $((W / 2)) $((H * 43 / 100))
             sleep 4
             adb exec-out screencap -p > smoke-race-start.png
 
-            # Exercise left, right and nitro while racing.
-            adb shell input tap $((W * 15 / 100)) $((H * 88 / 100))
+            SIZE=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); W=\${SIZE%x*}; H=\${SIZE#*x}; if [ "$W" -lt "$H" ]; then T=$W; W=$H; H=$T; fi; S=$((H * 20 / 100)); Y=$((H - 28 - S / 2)); X=$((28 + S / 2)); adb shell input tap "$X" "$Y"
             sleep 0.5
-            adb shell input tap $((W * 28 / 100)) $((H * 88 / 100))
+
+            SIZE=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); W=\${SIZE%x*}; H=\${SIZE#*x}; if [ "$W" -lt "$H" ]; then T=$W; W=$H; H=$T; fi; S=$((H * 20 / 100)); Y=$((H - 28 - S / 2)); X=$((44 + S + S / 2)); adb shell input tap "$X" "$Y"
             sleep 0.5
-            adb shell input tap $((W * 86 / 100)) $((H * 88 / 100))
+
+            SIZE=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); W=\${SIZE%x*}; H=\${SIZE#*x}; if [ "$W" -lt "$H" ]; then T=$W; W=$H; H=$T; fi; S=$((H * 20 / 100)); Y=$((H - 28 - S / 2)); X=$((W - 42 - (S * 118 / 100) / 2)); adb shell input tap "$X" "$Y"
             sleep 1
             adb exec-out screencap -p > smoke-race-controls.png
 
-            adb logcat -d -t 1000 > smoke-logcat.txt
+            adb shell logcat -d -t 1500 > smoke-logcat.txt
 
             grep -q 'MENU=HOW_TO' smoke-logcat.txt
             grep -q 'HOW_TO=BACK' smoke-logcat.txt
@@ -138,7 +110,7 @@ jobs:
             grep -q 'CONTROL=LEFT' smoke-logcat.txt
             grep -q 'CONTROL=RIGHT' smoke-logcat.txt
             grep -q 'CONTROL=BOOST' smoke-logcat.txt
-            ! grep -E 'FATAL EXCEPTION|ANR in ' smoke-logcat.txt
+            ! grep -E 'FATAL EXCEPTION|ANR in |AndroidRuntime' smoke-logcat.txt
 
       - name: Upload smoke evidence
         if: always()
@@ -151,5 +123,5 @@ jobs:
             smoke-race-start.png
             smoke-race-controls.png
             smoke-logcat.txt
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
