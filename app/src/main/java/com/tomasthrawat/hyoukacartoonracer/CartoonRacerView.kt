@@ -386,17 +386,6 @@ class CartoonRacerView(context: Context) : View(context) {
         c.drawText("3 LAPS  •  4 RACERS  •  NITRO", w * 0.5f, h * 0.93f, p)
     }
 
-    private fun menuButton(c: Canvas, rect: RectF, label: String, fill: Int) {
-        p.color = 0x55000000
-        c.drawRoundRect(RectF(rect.left + 6f, rect.top + 8f, rect.right + 6f, rect.bottom + 8f), 28f, 28f, p)
-        p.color = fill
-        c.drawRoundRect(rect, 28f, 28f, p)
-        p.color = 0xFF182233.toInt()
-        p.textAlign = Paint.Align.CENTER
-        p.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        p.textSize = 21f
-        c.drawText(label, rect.centerX(), rect.centerY() + 7f, p)
-    }
 
     private fun drawHowTo(c: Canvas) {
         val w = width.toFloat()
