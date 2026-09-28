@@ -6,7 +6,6 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.os.SystemClock
-import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
@@ -63,10 +62,7 @@ class CartoonRacerView(context: Context) : View(context) {
         when (state) {
             State.COUNTDOWN -> {
                 countdown -= dt
-                if (countdown <= 0f) {
-                    state = State.RACING
-                    Log.i("HYOUKA_RACER", "STATE=RACING")
-                }
+                if (countdown <= 0f) state = State.RACING
             }
             State.RACING -> update(dt)
             else -> Unit
@@ -108,13 +104,14 @@ class CartoonRacerView(context: Context) : View(context) {
     private fun startRace() {
         resetRace()
         state = State.COUNTDOWN
-        Log.i("HYOUKA_RACER", "STATE=COUNTDOWN")
         last = SystemClock.uptimeMillis()
     }
 
     private fun update(dt: Float) {
         time += dt
 
+        if (leftHeld) targetLane = max(0, targetLane - 1)
+        if (rightHeld) targetLane = min(2, targetLane + 1)
 
         boost = if (boostHeld) 0.18f else max(0f, boost - dt)
         val targetSpeed = 225f + if (boost > 0f) 150f else 0f
@@ -138,7 +135,6 @@ class CartoonRacerView(context: Context) : View(context) {
         if (player.progress >= 3000f) {
             player.speed = 0f
             state = State.FINISHED
-            Log.i("HYOUKA_RACER", "STATE=FINISHED")
             clearInput()
         }
     }
@@ -185,22 +181,13 @@ class CartoonRacerView(context: Context) : View(context) {
 
     private fun handleMenuTap(x: Float, y: Float) {
         when {
-            menuPlayRect().contains(x, y) -> {
-                Log.i("HYOUKA_RACER", "MENU=PLAY")
-                startRace()
-            }
-            menuHowRect().contains(x, y) -> {
-                Log.i("HYOUKA_RACER", "MENU=HOW_TO")
-                state = State.HOW_TO
-            }
+            menuPlayRect().contains(x, y) -> startRace()
+            menuHowRect().contains(x, y) -> state = State.HOW_TO
         }
     }
 
     private fun handleHowToTap(x: Float, y: Float) {
-        if (howBackRect().contains(x, y)) {
-            Log.i("HYOUKA_RACER", "HOW_TO=BACK")
-            state = State.MENU
-        }
+        if (howBackRect().contains(x, y)) state = State.MENU
     }
 
     private fun handleRaceDown(x: Float, y: Float) {
@@ -209,31 +196,13 @@ class CartoonRacerView(context: Context) : View(context) {
         val right = rightControlRect()
         val nitro = boostRect()
         when {
-            left.contains(x, y) -> {
-                leftHeld = true
-                targetLane = max(0, targetLane - 1)
-                Log.i("HYOUKA_RACER", "CONTROL=LEFT")
-            }
-            right.contains(x, y) -> {
-                rightHeld = true
-                targetLane = min(2, targetLane + 1)
-                Log.i("HYOUKA_RACER", "CONTROL=RIGHT")
-            }
-            nitro.contains(x, y) -> {
-                boostHeld = true
-                Log.i("HYOUKA_RACER", "CONTROL=BOOST")
-            }
+            left.contains(x, y) -> leftHeld = true
+            right.contains(x, y) -> rightHeld = true
+            nitro.contains(x, y) -> boostHeld = true
             else -> {
-                if (x < width * 0.42f) {
-                    targetLane = max(0, targetLane - 1)
-                    Log.i("HYOUKA_RACER", "CONTROL=LEFT")
-                } else if (x > width * 0.58f) {
-                    targetLane = min(2, targetLane + 1)
-                    Log.i("HYOUKA_RACER", "CONTROL=RIGHT")
-                } else if (y > h * 0.58f) {
-                    boostHeld = true
-                    Log.i("HYOUKA_RACER", "CONTROL=BOOST")
-                }
+                if (x < width * 0.42f) targetLane = max(0, targetLane - 1)
+                else if (x > width * 0.58f) targetLane = min(2, targetLane + 1)
+                else if (y > h * 0.58f) boostHeld = true
             }
         }
     }
@@ -417,17 +386,6 @@ class CartoonRacerView(context: Context) : View(context) {
         c.drawText("3 LAPS  •  4 RACERS  •  NITRO", w * 0.5f, h * 0.93f, p)
     }
 
-    private fun menuButton(c: Canvas, rect: RectF, label: String, fill: Int) {
-        p.color = 0x55000000
-        c.drawRoundRect(RectF(rect.left + 6f, rect.top + 8f, rect.right + 6f, rect.bottom + 8f), 28f, 28f, p)
-        p.color = fill
-        c.drawRoundRect(rect, 28f, 28f, p)
-        p.color = 0xFF182233.toInt()
-        p.textAlign = Paint.Align.CENTER
-        p.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        p.textSize = 21f
-        c.drawText(label, rect.centerX(), rect.centerY() + 7f, p)
-    }
 
     private fun drawHowTo(c: Canvas) {
         val w = width.toFloat()
