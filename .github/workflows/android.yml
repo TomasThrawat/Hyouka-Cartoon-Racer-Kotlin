@@ -15,6 +15,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Configure Git
+        run: git config --global init.defaultBranch main
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -55,6 +58,9 @@ jobs:
     timeout-minutes: 12
 
     steps:
+      - name: Configure Git
+        run: git config --global init.defaultBranch main
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -100,18 +106,39 @@ jobs:
               H=$T
             fi
 
-            adb shell input tap $((W / 2)) $((H * 43 / 100))
+            # Test HOW TO PLAY and BACK navigation.
+            adb shell input tap $((W / 2)) $((H * 56 / 100))
             sleep 1
-            adb exec-out screencap -p > smoke-countdown.png
+            adb exec-out screencap -p > smoke-howto.png
 
-            adb shell input tap $((W * 15 / 100)) $((H * 88 / 100))
+            adb shell input tap $((W / 2)) $((H * 85 / 100))
             sleep 1
+
+            # Start the race from the main menu.
+            adb shell input tap $((W / 2)) $((H * 43 / 100))
+            sleep 4
+            adb exec-out screencap -p > smoke-race-start.png
+
+            # Exercise left, right and nitro while racing.
+            adb shell input tap $((W * 15 / 100)) $((H * 88 / 100))
+            sleep 0.5
+            adb shell input tap $((W * 28 / 100)) $((H * 88 / 100))
+            sleep 0.5
             adb shell input tap $((W * 86 / 100)) $((H * 88 / 100))
             sleep 1
-            adb exec-out screencap -p > smoke-race.png
+            adb exec-out screencap -p > smoke-race-controls.png
 
-            adb logcat -d -t 500 > smoke-logcat.txt
-            ! grep -E "FATAL EXCEPTION|ANR in " smoke-logcat.txt
+            adb logcat -d -t 1000 > smoke-logcat.txt
+
+            grep -q 'MENU=HOW_TO' smoke-logcat.txt
+            grep -q 'HOW_TO=BACK' smoke-logcat.txt
+            grep -q 'MENU=PLAY' smoke-logcat.txt
+            grep -q 'STATE=COUNTDOWN' smoke-logcat.txt
+            grep -q 'STATE=RACING' smoke-logcat.txt
+            grep -q 'CONTROL=LEFT' smoke-logcat.txt
+            grep -q 'CONTROL=RIGHT' smoke-logcat.txt
+            grep -q 'CONTROL=BOOST' smoke-logcat.txt
+            ! grep -E 'FATAL EXCEPTION|ANR in ' smoke-logcat.txt
 
       - name: Upload smoke evidence
         if: always()
@@ -120,8 +147,9 @@ jobs:
           name: hyouka-cartoon-racer-smoke-test
           path: |
             smoke-menu.png
-            smoke-countdown.png
-            smoke-race.png
+            smoke-howto.png
+            smoke-race-start.png
+            smoke-race-controls.png
             smoke-logcat.txt
           if-no-files-found: warn
           retention-days: 30
