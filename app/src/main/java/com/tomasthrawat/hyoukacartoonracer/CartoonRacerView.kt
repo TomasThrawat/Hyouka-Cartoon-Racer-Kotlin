@@ -15,8 +15,7 @@ import kotlin.math.min
 import kotlin.math.sin
 
 class CartoonRacerView(context: Context) : View(context) {
-
-    private enum class GameState { READY, RACING, FINISHED }
+    private enum class State { READY, RACING, FINISHED }
 
     private data class Racer(
         val name: String,
@@ -28,456 +27,342 @@ class CartoonRacerView(context: Context) : View(context) {
         var wobble: Float = 0f
     )
 
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isDither = true }
-    private val roadPath = Path()
-    private val cloudPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-    private var state = GameState.READY
-    private var lastFrameMs = SystemClock.uptimeMillis()
-    private var elapsed = 0f
-    private var distance = 0f
-    private var roadScroll = 0f
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+    private val white = 0xFFFFFFFF.toInt()
+    private var state = State.READY
+    private var last = SystemClock.uptimeMillis()
+    private var time = 0f
+    private var playerDistance = 0f
+    private var scroll = 0f
+    private var lane = 1f
     private var targetLane = 1
-    private var playerLane = 1f
-    private var boostTimer = 0f
-    private var finishTimer = 0f
+    private var boost = 0f
 
-    private val player = Racer("YOU", 0xFFFF5A5F.toInt(), 0xFFFFFFFF.toInt(), 1, 0f, 0f)
-    private val ai = mutableListOf<Racer>()
+    private val player = Racer("YOU", 0xFFFF5A5F.toInt(), white, 1, 0f, 220f)
+    private val rivals = mutableListOf<Racer>()
 
     init {
-        isFocusable = true
-        resetRace()
+        reset()
     }
 
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
+    override fun onDraw(c: Canvas) {
         val now = SystemClock.uptimeMillis()
-        val dt = min(0.033f, max(0f, (now - lastFrameMs) / 1000f))
-        lastFrameMs = now
-
-        if (state == GameState.RACING) update(dt)
-        drawWorld(canvas)
+        val dt = min(0.033f, max(0f, (now - last) / 1000f))
+        last = now
+        if (state == State.RACING) update(dt)
+        drawScene(c)
         postInvalidateOnAnimation()
     }
 
-    private fun resetRace() {
-        state = GameState.READY
-        elapsed = 0f
-        distance = 0f
-        roadScroll = 0f
-        boostTimer = 0f
-        finishTimer = 0f
+    private fun reset() {
+        state = State.READY
+        last = SystemClock.uptimeMillis()
+        time = 0f
+        playerDistance = 0f
+        scroll = 0f
+        lane = 1f
         targetLane = 1
-        playerLane = 1f
+        boost = 0f
         player.progress = 0f
-        player.speed = 210f
-        ai.clear()
-        ai += Racer("MOMO", 0xFF4C9AFF.toInt(), 0xFFFFE66D.toInt(), 0, 0.12f, 195f)
-        ai += Racer("KUMA", 0xFF50C878.toInt(), 0xFFFFFFFF.toInt(), 2, 0.09f, 202f)
-        ai += Racer("NOVA", 0xFF9B6DFF.toInt(), 0xFFFF8CC6.toInt(), 1, 0.08f, 198f)
+        player.speed = 220f
+        rivals.clear()
+        rivals += Racer("MOMO", 0xFF4C9AFF.toInt(), 0xFFFFE66D.toInt(), 0, 80f, 198f)
+        rivals += Racer("KUMA", 0xFF50C878.toInt(), white, 2, 120f, 204f)
+        rivals += Racer("NOVA", 0xFF9B6DFF.toInt(), 0xFFFF8CC6.toInt(), 1, 150f, 201f)
     }
 
-    private fun startRace() {
-        if (state == GameState.READY) {
-            state = GameState.RACING
-            lastFrameMs = SystemClock.uptimeMillis()
-        } else if (state == GameState.FINISHED) {
-            resetRace()
-            state = GameState.RACING
-            lastFrameMs = SystemClock.uptimeMillis()
-        }
+    private fun start() {
+        if (state == State.FINISHED) reset()
+        state = State.RACING
+        last = SystemClock.uptimeMillis()
     }
 
     private fun update(dt: Float) {
-        elapsed += dt
-        val boostActive = boostTimer > 0f
-        if (boostTimer > 0f) boostTimer -= dt
-
-        val cruise = 230f
-        val desiredSpeed = cruise + if (boostActive) 125f else 0f
-        player.speed += (desiredSpeed - player.speed) * min(1f, dt * 4.5f)
+        time += dt
+        boost = max(0f, boost - dt)
+        val targetSpeed = 230f + if (boost > 0f) 130f else 0f
+        player.speed += (targetSpeed - player.speed) * min(1f, dt * 5f)
         player.progress += player.speed * dt
+        playerDistance = player.progress
+        lane += (targetLane - lane) * min(1f, dt * 9f)
+        scroll = (scroll + player.speed * dt) % 600f
 
-        playerLane += (targetLane - playerLane) * min(1f, dt * 10f)
-        roadScroll = (roadScroll + player.speed * dt) % 500f
-        distance = player.progress
-
-        ai.forEachIndexed { index, racer ->
-            val variation = sin(elapsed * (0.9f + index * 0.18f) + index) * 7f
-            val catchUp = if (racer.progress < player.progress - 80f) 1.04f else 0.98f
-            racer.speed = (racer.speed + variation) * catchUp
-            racer.speed = racer.speed.coerceIn(175f, 235f)
-            racer.progress += racer.speed * dt
-            racer.wobble = sin(elapsed * 1.7f + index) * 0.08f
-        }
-
-        handleCollisions()
-
-        if (player.progress >= 3000f) {
-            finishTimer += dt
-            if (finishTimer > 0.25f) state = GameState.FINISHED
-        }
-    }
-
-    private fun handleCollisions() {
-        ai.forEach { racer ->
-            val progressGap = abs(racer.progress - player.progress)
-            val laneGap = abs(racer.lane.toFloat() - playerLane)
-            if (progressGap < 75f && laneGap < 0.28f) {
-                player.speed = max(170f, player.speed - 70f)
-                playerLane += if (racer.lane < playerLane) 0.12f else -0.12f
-                playerLane = playerLane.coerceIn(0f, 2f)
+        rivals.forEachIndexed { i, r ->
+            r.speed = (r.speed + sin(time * (0.9f + i * 0.2f) + i) * 5f).coerceIn(178f, 235f)
+            r.progress += r.speed * dt
+            r.wobble = sin(time * 1.7f + i) * 0.06f
+            if (abs(r.progress - player.progress) < 62f && abs(r.lane - lane) < 0.3f) {
+                player.speed = max(165f, player.speed - 75f)
+                lane = (lane + if (r.lane < lane) 0.1f else -0.1f).coerceIn(0f, 2f)
             }
         }
+
+        if (player.progress >= 3000f) state = State.FINISHED
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                if (state != GameState.RACING) {
-                    startRace()
-                    return true
-                }
-                handleButtonDown(event.x, event.y)
-                return true
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> return true
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (e.actionMasked != MotionEvent.ACTION_DOWN) return true
+        if (state != State.RACING) {
+            start()
+            return true
+        }
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val s = min(w, h) * 0.17f
+        val y0 = h - 30f - s
+        when {
+            RectF(28f, y0, 28f + s, h - 30f).contains(e.x, e.y) ->
+                targetLane = max(0, targetLane - 1)
+            RectF(42f + s, y0, 42f + s * 2f, h - 30f).contains(e.x, e.y) ->
+                targetLane = min(2, targetLane + 1)
+            RectF(w - 40f - s * 1.15f, h - 30f - s, w - 40f, h - 30f).contains(e.x, e.y) ->
+                boost = 1.35f
         }
         return true
     }
 
-    private fun handleButtonDown(x: Float, y: Float) {
+    private fun drawScene(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
-        val bottom = h - 30f
-        val size = min(w, h) * 0.17f
-        val left = RectF(28f, bottom - size, 28f + size, bottom)
-        val right = RectF(42f + size, bottom - size, 42f + size * 2f, bottom)
-        val boost = RectF(w - 40f - size * 1.15f, bottom - size * 0.92f, w - 40f, bottom)
+        val horizon = h * 0.34f
+        val roadTop = w * 0.24f
+        val roadBottom = w * 1.02f
+        val center = w * 0.5f
 
-        when {
-            left.contains(x, y) -> targetLane = max(0, targetLane - 1)
-            right.contains(x, y) -> targetLane = min(2, targetLane + 1)
-            boost.contains(x, y) -> boostTimer = 1.25f
-        }
+        p.style = Paint.Style.FILL
+        p.color = 0xFF9DE2FF.toInt()
+        c.drawRect(0f, 0f, w, h, p)
+        drawSun(c, w * 0.82f, h * 0.14f, min(w, h) * 0.07f)
+        drawCloud(c, w * 0.16f, h * 0.13f, 1f)
+        drawCloud(c, w * 0.48f, h * 0.11f, 0.7f)
+        drawHills(c, horizon)
+
+        p.color = 0xFF66C66A.toInt()
+        c.drawRect(0f, horizon, w, h, p)
+
+        path.reset()
+        path.moveTo(center - roadTop, horizon)
+        path.lineTo(center + roadTop, horizon)
+        path.lineTo(center + roadBottom, h)
+        path.lineTo(center - roadBottom, h)
+        path.close()
+        p.color = 0xFF555C64.toInt()
+        c.drawPath(path, p)
+
+        drawEdge(c, center - roadTop, center - roadBottom, horizon, h, true)
+        drawEdge(c, center + roadTop, center + roadBottom, horizon, h, false)
+        drawDashes(c, center, roadTop, roadBottom, horizon, h)
+        drawTrees(c, horizon)
+        drawRivals(c, center, horizon)
+        drawCar(c, center + (lane - 1f) * w * 0.17f, h * 0.80f, 1.35f, player.body, player.stripe, true, "YOU")
+        drawHud(c)
+        drawControls(c)
+
+        if (state == State.READY) drawReady(c)
+        if (state == State.FINISHED) drawFinish(c)
     }
 
-    private fun drawWorld(canvas: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
-
-        paint.style = Paint.Style.FILL
-        paint.color = 0xFF9DE2FF.toInt()
-        canvas.drawRect(0f, 0f, w, h, paint)
-
-        drawSun(canvas, w * 0.82f, h * 0.16f, min(w, h) * 0.08f)
-        drawClouds(canvas)
-        drawHills(canvas, h * 0.35f)
-
-        val horizon = h * 0.33f
-        val roadTop = w * 0.25f
-        val roadBottom = w * 1.05f
-        val center = w / 2f
-
-        paint.color = 0xFF66C66A.toInt()
-        canvas.drawRect(0f, horizon, w, h, paint)
-
-        roadPath.reset()
-        roadPath.moveTo(center - roadTop, horizon)
-        roadPath.lineTo(center + roadTop, horizon)
-        roadPath.lineTo(center + roadBottom, h)
-        roadPath.lineTo(center - roadBottom, h)
-        roadPath.close()
-        paint.color = 0xFF545B63.toInt()
-        canvas.drawPath(roadPath, paint)
-
-        drawRoadEdge(canvas, center - roadTop, center - roadBottom, horizon, h)
-        drawRoadEdge(canvas, center + roadTop, center + roadBottom, horizon, h)
-        drawLaneDashes(canvas, center, roadTop, roadBottom, horizon, h)
-        drawScenery(canvas, horizon)
-        drawRivals(canvas, center, horizon)
-        drawPlayer(canvas, center, h)
-
-        drawHud(canvas)
-        drawControls(canvas)
-
-        if (state == GameState.READY) drawStartOverlay(canvas)
-        if (state == GameState.FINISHED) drawFinishOverlay(canvas)
-    }
-
-    private fun drawRoadEdge(canvas: Canvas, topX: Float, bottomX: Float, topY: Float, bottomY: Float) {
-        val thicknessTop = 8f
-        val thicknessBottom = 30f
-        roadPath.reset()
-        if (bottomX < topX) {
-            roadPath.moveTo(topX, topY)
-            roadPath.lineTo(topX + thicknessTop, topY)
-            roadPath.lineTo(bottomX + thicknessBottom, bottomY)
-            roadPath.lineTo(bottomX, bottomY)
+    private fun drawEdge(c: Canvas, tx: Float, bx: Float, ty: Float, by: Float, left: Boolean) {
+        path.reset()
+        if (left) {
+            path.moveTo(tx, ty)
+            path.lineTo(tx + 8f, ty)
+            path.lineTo(bx + 30f, by)
+            path.lineTo(bx, by)
         } else {
-            roadPath.moveTo(topX - thicknessTop, topY)
-            roadPath.lineTo(topX, topY)
-            roadPath.lineTo(bottomX, bottomY)
-            roadPath.lineTo(bottomX - thicknessBottom, bottomY)
+            path.moveTo(tx - 8f, ty)
+            path.lineTo(tx, ty)
+            path.lineTo(bx, by)
+            path.lineTo(bx - 30f, by)
         }
-        roadPath.close()
-        paint.color = 0xFFFFFFFF.toInt()
-        canvas.drawPath(roadPath, paint)
+        path.close()
+        p.color = white
+        c.drawPath(path, p)
     }
 
-    private fun drawLaneDashes(
-        canvas: Canvas,
-        center: Float,
-        roadTop: Float,
-        roadBottom: Float,
-        horizon: Float,
-        bottomY: Float
-    ) {
-        paint.color = 0xFFD8DDE2.toInt()
-        val laneOffsets = listOf(-0.33f, 0.33f)
-        for (offset in laneOffsets) {
+    private fun drawDashes(c: Canvas, center: Float, top: Float, bottom: Float, horizon: Float, by: Float) {
+        p.color = 0xFFDCE0E5.toInt()
+        for (off in floatArrayOf(-0.33f, 0.33f)) {
             for (i in 0..11) {
-                val t0 = ((i * 0.11f) + (roadScroll / 700f)) % 1f
-                val t1 = min(1f, t0 + 0.045f)
-                val y0 = horizon + (bottomY - horizon) * t0
-                val y1 = horizon + (bottomY - horizon) * t1
-                val half0 = roadTop + (roadBottom - roadTop) * t0
-                val x0 = center + half0 * offset
-                val width = 6f + 18f * t0
-                canvas.drawRect(x0 - width, y0, x0 + width, y1, paint)
-                if (t1 >= 1f) break
+                val t = ((i * 0.11f) + scroll / 700f) % 1f
+                val y = horizon + (by - horizon) * t
+                val half = top + (bottom - top) * t
+                val x = center + half * off
+                val dash = 6f + 18f * t
+                c.drawRect(x - dash, y, x + dash, y + 10f + 15f * t, p)
             }
         }
     }
 
-    private fun drawScenery(canvas: Canvas, horizon: Float) {
+    private fun drawTrees(c: Canvas, horizon: Float) {
         val w = width.toFloat()
         val h = height.toFloat()
         for (i in 0..9) {
-            val phase = ((i * 0.17f + roadScroll / 520f) % 1f)
-            val y = horizon + (h - horizon) * phase
-            val roadHalf = w * (0.25f + 0.8f * phase)
+            val t = ((i * 0.17f + scroll / 520f) % 1f)
+            val y = horizon + (h - horizon) * t
+            val half = w * (0.25f + 0.8f * t)
             val side = if (i % 2 == 0) -1f else 1f
-            val x = w / 2f + side * (roadHalf + 55f + (i % 3) * 24f)
-            drawTree(canvas, x, y, 18f + 45f * phase)
-            if (i % 3 == 0) drawFlower(canvas, x + side * 28f, y + 14f, 8f + 10f * phase)
+            val x = w * 0.5f + side * (half + 55f + (i % 3) * 23f)
+            drawTree(c, x, y, 18f + 44f * t)
         }
     }
 
-    private fun drawTree(canvas: Canvas, x: Float, y: Float, size: Float) {
-        paint.color = 0xFF8A5A3B.toInt()
-        canvas.drawRoundRect(RectF(x - size * 0.16f, y - size * 0.08f, x + size * 0.16f, y + size * 0.8f), size * 0.12f, size * 0.12f, paint)
-        paint.color = 0xFF2E9B59.toInt()
-        canvas.drawCircle(x, y - size * 0.18f, size * 0.48f, paint)
-        paint.color = 0xFF56C878.toInt()
-        canvas.drawCircle(x - size * 0.23f, y - size * 0.35f, size * 0.34f, paint)
-        paint.color = 0xFF3BBE68.toInt()
-        canvas.drawCircle(x + size * 0.25f, y - size * 0.35f, size * 0.32f, paint)
+    private fun drawTree(c: Canvas, x: Float, y: Float, s: Float) {
+        p.color = 0xFF8A5A3B.toInt()
+        c.drawRoundRect(RectF(x - s * 0.15f, y - s * 0.05f, x + s * 0.15f, y + s * 0.8f), s * 0.1f, s * 0.1f, p)
+        p.color = 0xFF2E9B59.toInt()
+        c.drawCircle(x, y - s * 0.25f, s * 0.5f, p)
+        p.color = 0xFF56C878.toInt()
+        c.drawCircle(x - s * 0.25f, y - s * 0.4f, s * 0.34f, p)
+        p.color = 0xFF3BBE68.toInt()
+        c.drawCircle(x + s * 0.24f, y - s * 0.38f, s * 0.31f, p)
     }
 
-    private fun drawFlower(canvas: Canvas, x: Float, y: Float, size: Float) {
-        paint.color = 0xFF3E9F58.toInt()
-        canvas.drawRect(x - 2f, y, x + 2f, y + size * 2.3f, paint)
-        paint.color = 0xFFFF6FA9.toInt()
-        for (a in 0..4) {
-            val rad = a * 1.2566f
-            canvas.drawCircle(x + cos(rad) * size * 0.7f, y + sin(rad) * size * 0.7f, size * 0.42f, paint)
-        }
-        paint.color = 0xFFFFDD57.toInt()
-        canvas.drawCircle(x, y, size * 0.4f, paint)
-    }
-
-    private fun drawSun(canvas: Canvas, x: Float, y: Float, radius: Float) {
-        paint.color = 0xFFFFD95A.toInt()
-        canvas.drawCircle(x, y, radius, paint)
-        paint.color = 0x66FFFFFF
-        paint.strokeWidth = 7f
-        for (i in 0..7) {
-            val a = i * 0.785f
-            val x1 = x + cos(a) * radius * 1.45f
-            val y1 = y + sin(a) * radius * 1.45f
-            val x2 = x + cos(a) * radius * 1.85f
-            val y2 = y + sin(a) * radius * 1.85f
-            canvas.drawLine(x1, y1, x2, y2, paint)
-        }
-    }
-
-    private fun drawClouds(canvas: Canvas) {
-        drawCloud(canvas, width * 0.16f, height * 0.13f, 1.0f)
-        drawCloud(canvas, width * 0.47f, height * 0.11f, 0.72f)
-    }
-
-    private fun drawCloud(canvas: Canvas, x: Float, y: Float, scale: Float) {
-        cloudPaint.color = 0xEEFFFFFF.toInt()
-        canvas.drawCircle(x, y, 23f * scale, cloudPaint)
-        canvas.drawCircle(x + 28f * scale, y - 8f * scale, 31f * scale, cloudPaint)
-        canvas.drawCircle(x + 60f * scale, y, 22f * scale, cloudPaint)
-        canvas.drawRoundRect(RectF(x - 20f * scale, y, x + 80f * scale, y + 28f * scale), 15f, 15f, cloudPaint)
-    }
-
-    private fun drawHills(canvas: Canvas, baseY: Float) {
-        paint.color = 0xFF78C878.toInt()
-        roadPath.reset()
-        roadPath.moveTo(0f, baseY)
-        roadPath.quadTo(width * 0.12f, baseY - 100f, width * 0.27f, baseY)
-        roadPath.quadTo(width * 0.45f, baseY - 135f, width * 0.61f, baseY)
-        roadPath.quadTo(width * 0.8f, baseY - 90f, width, baseY)
-        roadPath.lineTo(width, height)
-        roadPath.lineTo(0f, height)
-        roadPath.close()
-        canvas.drawPath(roadPath, paint)
-    }
-
-    private fun laneX(center: Float, relative: Float, lane: Float): Float {
-        val t = (1f - ((relative + 420f) / 840f)).coerceIn(0f, 1f)
-        val half = width * (0.25f + 0.8f * t)
-        return center + (lane - 1f) * half * 0.63f
-    }
-
-    private fun drawRivals(canvas: Canvas, center: Float, horizon: Float) {
-        ai.sortedByDescending { it.progress }.forEach { racer ->
-            val relative = racer.progress - player.progress
-            if (relative in -350f..420f) {
-                val t = (relative + 350f) / 770f
-                val y = horizon + height * 0.60f * (1f - t)
-                val scale = 0.45f + 0.9f * (1f - t).coerceIn(0f, 1f)
-                val x = laneX(center, relative, racer.lane.toFloat() + racer.wobble)
-                drawCar(canvas, x, y, scale, racer.body, racer.stripe, false, racer.name)
+    private fun drawRivals(c: Canvas, center: Float, horizon: Float) {
+        rivals.sortedByDescending { it.progress }.forEach { r ->
+            val rel = r.progress - player.progress
+            if (rel in -360f..420f) {
+                val t = ((rel + 360f) / 780f).coerceIn(0f, 1f)
+                val y = horizon + height * 0.61f * (1f - t)
+                val sc = 0.42f + 0.92f * (1f - t)
+                val half = width * (0.25f + 0.8f * (1f - t))
+                val x = center + (r.lane.toFloat() - 1f + r.wobble) * half * 0.63f
+                drawCar(c, x, y, sc, r.body, r.stripe, false, r.name)
             }
         }
     }
 
-    private fun drawPlayer(canvas: Canvas, center: Float, h: Float) {
-        val y = h * 0.80f
-        val x = center + (playerLane - 1f) * width * 0.17f
-        drawCar(canvas, x, y, 1.38f, player.body, player.stripe, true, "YOU")
-    }
-
-    private fun drawCar(
-        canvas: Canvas,
-        x: Float,
-        y: Float,
-        scale: Float,
-        bodyColor: Int,
-        stripeColor: Int,
-        playerCar: Boolean,
-        label: String
-    ) {
-        val carW = 62f * scale
-        val carH = 104f * scale
-        paint.color = 0x44000000
-        canvas.drawOval(RectF(x - carW * 0.62f, y + carH * 0.35f, x + carW * 0.62f, y + carH * 0.55f), paint)
-
-        paint.color = bodyColor
-        canvas.drawRoundRect(RectF(x - carW / 2, y - carH / 2, x + carW / 2, y + carH / 2), 17f * scale, 17f * scale, paint)
-
-        paint.color = 0xFF2A3038.toInt()
-        canvas.drawRoundRect(
-            RectF(x - carW * 0.33f, y - carH * 0.28f, x + carW * 0.33f, y + carH * 0.03f),
-            12f * scale, 12f * scale, paint
-        )
-
-        paint.color = stripeColor
-        canvas.drawRoundRect(
-            RectF(x - carW * 0.10f, y - carH * 0.49f, x + carW * 0.10f, y + carH * 0.49f),
-            8f * scale, 8f * scale, paint
-        )
-
-        paint.color = 0xFFFFFFFF.toInt()
-        canvas.drawCircle(x - carW * 0.23f, y - carH * 0.34f, 6f * scale, paint)
-        canvas.drawCircle(x + carW * 0.23f, y - carH * 0.34f, 6f * scale, paint)
-
-        paint.color = 0xFFFFF1A8.toInt()
-        canvas.drawCircle(x - carW * 0.27f, y + carH * 0.36f, 7f * scale, paint)
-        canvas.drawCircle(x + carW * 0.27f, y + carH * 0.36f, 7f * scale, paint)
-
-        if (playerCar) {
-            paint.color = 0xFFFFE45E.toInt()
-            paint.textSize = 16f * scale
-            paint.textAlign = Paint.Align.CENTER
-            paint.typeface = android.graphics.Typeface.DEFAULT_BOLD
-            canvas.drawText(label, x, y - carH * 0.64f, paint)
+    private fun drawCar(c: Canvas, x: Float, y: Float, scale: Float, body: Int, stripe: Int, label: Boolean, name: String) {
+        val cw = 62f * scale
+        val ch = 104f * scale
+        p.color = 0x44000000
+        c.drawOval(RectF(x - cw * 0.62f, y + ch * 0.35f, x + cw * 0.62f, y + ch * 0.55f), p)
+        p.color = body
+        c.drawRoundRect(RectF(x - cw / 2f, y - ch / 2f, x + cw / 2f, y + ch / 2f), 17f * scale, 17f * scale, p)
+        p.color = 0xFF2A3038.toInt()
+        c.drawRoundRect(RectF(x - cw * 0.33f, y - ch * 0.28f, x + cw * 0.33f, y + ch * 0.03f), 12f * scale, 12f * scale, p)
+        p.color = stripe
+        c.drawRoundRect(RectF(x - cw * 0.1f, y - ch * 0.49f, x + cw * 0.1f, y + ch * 0.49f), 8f * scale, 8f * scale, p)
+        p.color = white
+        c.drawCircle(x - cw * 0.23f, y - ch * 0.34f, 6f * scale, p)
+        c.drawCircle(x + cw * 0.23f, y - ch * 0.34f, 6f * scale, p)
+        p.color = 0xFFFFF1A8.toInt()
+        c.drawCircle(x - cw * 0.27f, y + ch * 0.36f, 7f * scale, p)
+        c.drawCircle(x + cw * 0.27f, y + ch * 0.36f, 7f * scale, p)
+        if (label) {
+            p.color = 0xFFFFE45E.toInt()
+            p.textAlign = Paint.Align.CENTER
+            p.textSize = 16f * scale
+            p.typeface = android.graphics.Typeface.DEFAULT_BOLD
+            c.drawText(name, x, y - ch * 0.64f, p)
         }
     }
 
-    private fun drawHud(canvas: Canvas) {
-        val w = width.toFloat()
-        paint.color = 0xCC172033.toInt()
-        canvas.drawRoundRect(RectF(22f, 20f, 310f, 104f), 24f, 24f, paint)
-
-        paint.color = 0xFFFFFFFF.toInt()
-        paint.textAlign = Paint.Align.LEFT
-        paint.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        paint.textSize = 23f
-        canvas.drawText("LAP " + min(3, (distance / 1000f).toInt() + 1) + "/3", 42f, 53f, paint)
-        canvas.drawText("POS " + playerPosition() + "/4", 42f, 84f, paint)
-
-        paint.textAlign = Paint.Align.RIGHT
-        canvas.drawText(player.speed.toInt().toString() + " km/h", w - 28f, 48f, paint)
-        canvas.drawText(elapsed.toInt().toString() + " s", w - 28f, 80f, paint)
+    private fun drawSun(c: Canvas, x: Float, y: Float, r: Float) {
+        p.color = 0xFFFFD95A.toInt()
+        c.drawCircle(x, y, r, p)
+        p.color = 0x66FFFFFF
+        p.strokeWidth = 6f
+        for (i in 0..7) {
+            val a = i * 0.785f
+            c.drawLine(x + cos(a) * r * 1.45f, y + sin(a) * r * 1.45f, x + cos(a) * r * 1.8f, y + sin(a) * r * 1.8f, p)
+        }
     }
 
-    private fun drawControls(canvas: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        val size = min(w, h) * 0.17f
-        val bottom = h - 30f
-
-        drawButton(canvas, RectF(28f, bottom - size, 28f + size, bottom), "◀")
-        drawButton(canvas, RectF(42f + size, bottom - size, 42f + size * 2f, bottom), "▶")
-        drawButton(canvas, RectF(w - 40f - size * 1.15f, bottom - size * 0.92f, w - 40f, bottom), "BOOST")
+    private fun drawCloud(c: Canvas, x: Float, y: Float, s: Float) {
+        p.color = 0xEEFFFFFF.toInt()
+        c.drawCircle(x, y, 23f * s, p)
+        c.drawCircle(x + 28f * s, y - 8f * s, 31f * s, p)
+        c.drawCircle(x + 60f * s, y, 22f * s, p)
+        c.drawRoundRect(RectF(x - 20f * s, y, x + 80f * s, y + 28f * s), 15f, 15f, p)
     }
 
-    private fun drawButton(canvas: Canvas, rect: RectF, text: String) {
-        paint.color = 0xE6FFFFFF.toInt()
-        canvas.drawRoundRect(rect, 20f, 20f, paint)
-        paint.color = 0xFF182233.toInt()
-        paint.textAlign = Paint.Align.CENTER
-        paint.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        paint.textSize = if (text == "BOOST") 18f else 30f
-        canvas.drawText(text, rect.centerX(), rect.centerY() + paint.textSize * 0.34f, paint)
-    }
-
-    private fun drawStartOverlay(canvas: Canvas) {
+    private fun drawHills(c: Canvas, base: Float) {
         val w = width.toFloat()
         val h = height.toFloat()
-        paint.color = 0xAA0F1725.toInt()
-        canvas.drawRect(0f, 0f, w, h, paint)
-
-        paint.color = 0xFFFFFFFF.toInt()
-        paint.textAlign = Paint.Align.CENTER
-        paint.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        paint.textSize = min(w, h) * 0.12f
-        canvas.drawText("HYOUKA CARTOON RACER", w / 2f, h * 0.36f, paint)
-
-        paint.color = 0xFFFFD95A.toInt()
-        paint.textSize = min(w, h) * 0.055f
-        canvas.drawText("Tap anywhere to race", w / 2f, h * 0.48f, paint)
-
-        paint.color = 0xFFFFFFFF.toInt()
-        paint.textSize = min(w, h) * 0.036f
-        canvas.drawText("Steer with ◀ ▶   •   BOOST for speed", w / 2f, h * 0.56f, paint)
+        p.color = 0xFF78C878.toInt()
+        path.reset()
+        path.moveTo(0f, base)
+        path.quadTo(w * 0.12f, base - 100f, w * 0.27f, base)
+        path.quadTo(w * 0.45f, base - 135f, w * 0.61f, base)
+        path.quadTo(w * 0.8f, base - 90f, w, base)
+        path.lineTo(w, h)
+        path.lineTo(0f, h)
+        path.close()
+        c.drawPath(path, p)
     }
 
-    private fun drawFinishOverlay(canvas: Canvas) {
+    private fun drawHud(c: Canvas) {
+        val w = width.toFloat()
+        p.color = 0xCC172033.toInt()
+        c.drawRoundRect(RectF(22f, 20f, 315f, 106f), 24f, 24f, p)
+        p.color = white
+        p.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        p.textAlign = Paint.Align.LEFT
+        p.textSize = 23f
+        val lap = min(3, (playerDistance / 1000f).toInt() + 1)
+        c.drawText("LAP " + lap + "/3", 42f, 54f, p)
+        c.drawText("POS " + position() + "/4", 42f, 85f, p)
+        p.textAlign = Paint.Align.RIGHT
+        c.drawText(player.speed.toInt().toString() + " km/h", w - 28f, 50f, p)
+        c.drawText(time.toInt().toString() + " s", w - 28f, 82f, p)
+    }
+
+    private fun drawControls(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
-        paint.color = 0xB3141B2A.toInt()
-        canvas.drawRect(0f, 0f, w, h, paint)
-
-        paint.color = 0xFFFFD95A.toInt()
-        paint.textAlign = Paint.Align.CENTER
-        paint.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        paint.textSize = min(w, h) * 0.13f
-        canvas.drawText("FINISH!", w / 2f, h * 0.40f, paint)
-
-        paint.color = 0xFFFFFFFF.toInt()
-        paint.textSize = min(w, h) * 0.055f
-        canvas.drawText("Position " + playerPosition() + "/4  •  " + elapsed.toInt() + " seconds", w / 2f, h * 0.51f, paint)
-        paint.textSize = min(w, h) * 0.045f
-        canvas.drawText("Tap to race again", w / 2f, h * 0.60f, paint)
+        val s = min(w, h) * 0.17f
+        val b = h - 30f
+        button(c, RectF(28f, b - s, 28f + s, b), "◀")
+        button(c, RectF(42f + s, b - s, 42f + s * 2f, b), "▶")
+        button(c, RectF(w - 40f - s * 1.15f, b - s * 0.92f, w - 40f, b), "BOOST")
     }
 
-    private fun playerPosition(): Int = 1 + ai.count { it.progress > player.progress }
+    private fun button(c: Canvas, r: RectF, label: String) {
+        p.color = 0xE6FFFFFF.toInt()
+        c.drawRoundRect(r, 20f, 20f, p)
+        p.color = 0xFF182233.toInt()
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        p.textSize = if (label == "BOOST") 18f else 30f
+        c.drawText(label, r.centerX(), r.centerY() + p.textSize * 0.34f, p)
+    }
+
+    private fun drawReady(c: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        p.color = 0xAA0F1725.toInt()
+        c.drawRect(0f, 0f, w, h, p)
+        p.color = white
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        p.textSize = min(w, h) * 0.12f
+        c.drawText("HYOUKA CARTOON RACER", w * 0.5f, h * 0.36f, p)
+        p.color = 0xFFFFD95A.toInt()
+        p.textSize = min(w, h) * 0.055f
+        c.drawText("Tap anywhere to race", w * 0.5f, h * 0.49f, p)
+        p.color = white
+        p.textSize = min(w, h) * 0.034f
+        c.drawText("◀ ▶ to steer  •  BOOST for speed", w * 0.5f, h * 0.56f, p)
+    }
+
+    private fun drawFinish(c: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        p.color = 0xB3141B2A.toInt()
+        c.drawRect(0f, 0f, w, h, p)
+        p.color = 0xFFFFD95A.toInt()
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        p.textSize = min(w, h) * 0.13f
+        c.drawText("FINISH!", w * 0.5f, h * 0.40f, p)
+        p.color = white
+        p.textSize = min(w, h) * 0.05f
+        c.drawText("Position " + position() + "/4  •  " + time.toInt() + " seconds", w * 0.5f, h * 0.51f, p)
+        p.textSize = min(w, h) * 0.042f
+        c.drawText("Tap to race again", w * 0.5f, h * 0.60f, p)
+    }
+
+    private fun position(): Int = 1 + rivals.count { it.progress > player.progress }
 }
