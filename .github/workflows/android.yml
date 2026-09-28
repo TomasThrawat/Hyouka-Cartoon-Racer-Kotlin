@@ -11,6 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -38,6 +39,68 @@ jobs:
         run: |
           test -s app/build/outputs/apk/debug/app-debug.apk
           ls -lh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Smoke test on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: Nexus 6
+          cores: 2
+          ram-size: 2048M
+          heap-size: 512M
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            set -eux
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+            PKG=com.tomasthrawat.hyoukacartoonracer.debug
+            ACTIVITY=$PKG/.MainActivity
+
+            adb shell am force-stop "$PKG"
+            adb shell am start -n "$ACTIVITY"
+            sleep 4
+
+            adb shell dumpsys activity activities | grep -F "$ACTIVITY"
+            adb exec-out screencap -p > smoke-menu.png
+
+            SIZE=$(adb shell wm size | tail -1 | tr -d '\r' | awk '{print $NF}')
+            W=\${SIZE%x*}
+            H=\${SIZE#*x}
+            if [ "$W" -lt "$H" ]; then
+              T=$W
+              W=$H
+              H=$T
+            fi
+
+            adb shell input tap $((W / 2)) $((H * 43 / 100))
+            sleep 1
+            adb exec-out screencap -p > smoke-countdown.png
+
+            adb shell input tap $((W * 15 / 100)) $((H * 88 / 100))
+            sleep 1
+            adb shell input tap $((W * 86 / 100)) $((H * 88 / 100))
+            sleep 1
+            adb exec-out screencap -p > smoke-race.png
+
+            adb logcat -d -t 500 > smoke-logcat.txt
+            ! grep -E "FATAL EXCEPTION|ANR in " smoke-logcat.txt
+
+      - name: Upload smoke-test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hyouka-cartoon-racer-smoke-test
+          path: |
+            smoke-menu.png
+            smoke-countdown.png
+            smoke-race.png
+            smoke-logcat.txt
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
