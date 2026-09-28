@@ -7,11 +7,12 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -40,6 +41,29 @@ jobs:
           test -s app/build/outputs/apk/debug/app-debug.apk
           ls -lh app/build/outputs/apk/debug/app-debug.apk
 
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: hyouka-cartoon-racer-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download APK
+        uses: actions/download-artifact@v8
+        with:
+          name: hyouka-cartoon-racer-debug
+          path: app/build/outputs/apk/debug
+
       - name: Smoke test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -50,7 +74,7 @@ jobs:
           cores: 2
           ram-size: 2048M
           heap-size: 512M
-          emulator-boot-timeout: 600
+          emulator-boot-timeout: 480
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: |
@@ -89,7 +113,7 @@ jobs:
             adb logcat -d -t 500 > smoke-logcat.txt
             ! grep -E "FATAL EXCEPTION|ANR in " smoke-logcat.txt
 
-      - name: Upload smoke-test evidence
+      - name: Upload smoke evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -100,12 +124,4 @@ jobs:
             smoke-race.png
             smoke-logcat.txt
           if-no-files-found: warn
-          retention-days: 30
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v7
-        with:
-          name: hyouka-cartoon-racer-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
           retention-days: 30
