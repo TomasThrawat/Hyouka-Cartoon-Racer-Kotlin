@@ -70,7 +70,7 @@ jobs:
       - name: Prepare Android emulator environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libx11-xcb1
+          sudo apt-get install -y libx11-dev libx11-xcb1 libx11-xcb-dev
           rm -f "$HOME/.android/emu-update-last-check.ini"
 
       - name: Android emulator smoke test
@@ -84,10 +84,10 @@ jobs:
           ram-size: 4096M
           heap-size: 768M
           emulator-boot-timeout: 600
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-metrics -no-snapshot
+          emulator-options: -no-window -gpu swiftshader -noaudio -no-boot-anim -camera-back none -no-metrics -no-snapshot
           disable-animations: true
           script: |
-            set -euxo pipefail
+            set -eux
 
             PKG=com.tomasthrawat.hyoukacartoonracer.debug
             ACTIVITY=com.tomasthrawat.hyoukacartoonracer.MainActivity
@@ -117,8 +117,8 @@ jobs:
             timeout 30s adb exec-out screencap -p > smoke-menu.png
 
             SIZE=$(timeout 30s adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1)
-            W=${SIZE%x*}
-            H=${SIZE#*x}
+            W=\${SIZE%x*}
+            H=\${SIZE#*x}
             if [ "$W" -lt "$H" ]; then T=$W; W=$H; H=$T; fi
 
             timeout 30s adb shell input tap $((W / 2)) $((H * 56 / 100))
